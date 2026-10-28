@@ -25,3 +25,12 @@ def test_main_default_model_is_ar(tmp_path, draws_df):
     p = tmp_path / "l.xlsx"; save_draws(draws_df, p)
     out = main(["--data", str(p), "--epochs", "1", "--window", "20", "--no-update", "--out", str(tmp_path / "ck")])
     assert set(out["models"]) == {"ar"}
+
+
+def test_main_tune_saves_and_reuses_params(tmp_path, draws_df):
+    p = tmp_path / "l.xlsx"; save_draws(draws_df, p); ck = tmp_path / "ck"
+    args = ["--data", str(p), "--epochs", "1", "--window", "20", "--no-update", "--out", str(ck)]
+    tuned = main(args + ["--tune"])
+    assert (ck / "ar_params.json").exists() and len(tuned["models"]["ar"]["trials"]) == 16
+    again = main(args)
+    assert again["models"]["ar"]["params"] == tuned["models"]["ar"]["params"]

@@ -24,6 +24,7 @@ with st.sidebar:
     tickets = st.number_input("티켓 수", 1, 50, 5, key="tickets")
     window = st.number_input("window (회차)", 10, 520, 52, key="window")
     auto_update = st.checkbox("자동 갱신", True, key="auto_update")
+    tune = st.checkbox("하이퍼파라미터 튜닝 (AR, 16개 설정, 수 분 소요)", False, key="tune")
 
 try:
     df = load_draws(DATA)
@@ -55,7 +56,7 @@ with st.expander("당첨번호 수동 입력"):
 if st.button("실행", key="run", type="primary"):
     # UI is AR-only; SEDD/HGNN stay CLI-only (--model) for comparison.
     argv = ["--data", DATA, "--model", "ar", "--epochs", str(epochs), "--tickets", str(tickets),
-            "--window", str(window)] + ([] if auto_update else ["--no-update"])
+            "--window", str(window)] + ([] if auto_update else ["--no-update"]) + (["--tune"] if tune else [])
     with st.spinner("갱신 + 학습 + 백테스트 중..."):
         st.session_state["result"] = main(argv)
 

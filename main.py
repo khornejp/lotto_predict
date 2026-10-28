@@ -12,6 +12,8 @@ import argparse
 import json
 import secrets
 import warnings
+from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 import pandas as pd
@@ -28,6 +30,7 @@ from models.diffusion import SetDiffusion
 from models.hypergraph import TemporalHGNN
 from models.set_transformer import ARSetTransformer
 from training.train import TrainConfig, set_seed, train_model
+from training.tune import tune
 
 MODELS: dict[str, type[nn.Module]] = {"ar": ARSetTransformer, "sedd": SetDiffusion, "hgnn": TemporalHGNN}
 
@@ -60,7 +63,7 @@ def main(argv: list[str] | None = None) -> dict:
         argv: CLI arguments (``sys.argv[1:]`` when None).
 
     Returns:
-        ``{"last_draw", "added", "update_warning", "sample_seed", "models": {name: {"history", "backtest", "next_draw"}}}``.
+        ``{"last_draw", "added", "update_warning", "sample_seed", "models": {name: {"params", "trials", "history", "backtest", "next_draw"}}}``.
     """
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", default="lotto.xlsx")
@@ -73,6 +76,7 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--out", default="checkpoints")
     ap.add_argument("--add", nargs=8, type=int, metavar=("DRAW", "N1", "N2", "N3", "N4", "N5", "N6", "BONUS"))
     ap.add_argument("--no-update", action="store_true", help="skip fetching new draws")
+    ap.add_argument("--tune", action="store_true", help="grid-search AR hyperparameters on val loss; saves {out}/ar_params.json")
     args = ap.parse_args(argv)
 
     if args.add:
@@ -94,11 +98,23 @@ def main(argv: list[str] | None = None) -> dict:
     Path(args.out).mkdir(parents=True, exist_ok=True)
     results = {}
     for name in MODELS if args.model == "all" else [args.model]:
+        make = partial(MODELS[name], window=args.window, node_dim=NODE_DIM, global_dim=GLOBAL_DIM)
+        params, trials = {}, None
+        if name == "ar":  # tuning applies to the production model only
+            params_file = Path(args.out) / "ar_params.json"
+            if args.tune:
+                params, trials = tune(make, Subset(ds, tr), Subset(ds, va), cfg)
+                params_file.write_text(json.dumps(params))
+            elif params_file.exists():
+                params = json.loads(params_file.read_text())
         set_seed(args.seed)
-        model = MODELS[name](window=args.window, node_dim=NODE_DIM, global_dim=GLOBAL_DIM)
-        hist = train_model(model, Subset(ds, tr), Subset(ds, va), cfg)
+        model = make(**{k: v for k, v in params.items() if k != "weight_decay"})
+        model_cfg = replace(cfg, weight_decay=params.get("weight_decay", cfg.weight_decay))
+        hist = train_model(model, Subset(ds, tr), Subset(ds, va), model_cfg)
         torch.save(model.state_dict(), Path(args.out) / f"{name}.pt")
         results[name] = {
+            "params": params,
+            "trials": trials,
             "history": hist,
             "backtest": backtest(model, Subset(ds, te), args.tickets, args.seed, cfg.device),
             "next_draw": predict_next(model, df, args.window, args.tickets, sample_seed, cfg.device),
@@ -106,7 +122,7 @@ def main(argv: list[str] | None = None) -> dict:
     out = {"last_draw": int(df["draw"].iloc[-1]), "added": added, "update_warning": update_warning,
            "sample_seed": sample_seed, "models": results}
     print(json.dumps({k: v for k, v in out.items() if k != "models"} | {
-        "models": {n: {"backtest": r["backtest"], "next_draw": r["next_draw"]} for n, r in results.items()}
+        "models": {n: {"params": r["params"], "backtest": r["backtest"], "next_draw": r["next_draw"]} for n, r in results.items()}
     }, indent=2))
     return out
 

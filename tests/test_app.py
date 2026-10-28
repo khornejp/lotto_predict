@@ -46,3 +46,8 @@ def test_app_manual_add_locked_file_shows_error(tmp_path, draws_df, monkeypatch)
 def test_app_offers_no_model_choice(tmp_path, draws_df, monkeypatch):
     p = tmp_path / "l.xlsx"; save_draws(draws_df, p); monkeypatch.setenv("LOTTO_DATA", str(p))
     assert len(AppTest.from_file("../app.py").run(timeout=30).selectbox) == 0
+
+
+def test_app_tune_checkbox_off_by_default(tmp_path, draws_df, monkeypatch):
+    p = tmp_path / "l.xlsx"; save_draws(draws_df, p); monkeypatch.setenv("LOTTO_DATA", str(p))
+    assert AppTest.from_file("../app.py").run(timeout=30).checkbox(key="tune").value is False

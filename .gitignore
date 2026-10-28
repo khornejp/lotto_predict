@@ -1,0 +1,6 @@
+__pycache__/
+.pytest_cache/
+checkpoints/
+.superpowers/
+*.tmp.xlsx
+lotto.xlsx.bak

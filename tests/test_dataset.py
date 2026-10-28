@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from data.dataset import LottoDataset, split_indices
+from data.dataset import LottoDataset, apply_scaler, fit_scaler, split_indices
 from data.loader import draws_to_multihot
 from features.build import CARRY_COL, GLOBAL_DIM, NODE_DIM, build_sample
 
@@ -50,3 +50,28 @@ def test_new_node_features_recency(draws_df):
     last = draws_df.loc[59, ["n1","n2","n3","n4","n5","n6"]].to_numpy(dtype=int) - 1
     carry = s["node"][:, CARRY_COL]
     assert carry[last].tolist() == [1.0] * 6 and carry.sum() == 6
+
+
+def test_fit_scaler_uses_train_items_only(draws_df):
+    ds = LottoDataset(draws_df, 52); tr, va, te = split_indices(len(ds))
+    before = fit_scaler(ds, tr)
+    for i in va + te:
+        ds.items[i]["node"] = ds.items[i]["node"] + 100.0
+    after = fit_scaler(ds, tr)
+    assert all(torch.equal(a, b) for k in before for a, b in zip(before[k], after[k]))
+
+
+def test_normalize_standardises_train_split(draws_df):
+    ds = LottoDataset(draws_df, 52); tr, _, _ = split_indices(len(ds))
+    ds.normalize(fit_scaler(ds, tr))
+    node = torch.stack([ds[i]["node"] for i in tr]); glob = torch.stack([ds[i]["glob"] for i in tr])
+    varying = node.std((0, 1)) > 0
+    assert torch.allclose(node.mean((0, 1)), torch.zeros(NODE_DIM), atol=1e-4)
+    assert torch.allclose(node.std((0, 1))[varying], torch.ones(int(varying.sum())), atol=1e-3)
+    assert torch.isfinite(glob).all() and torch.isfinite(node).all()
+
+
+def test_apply_scaler_constant_column_stays_finite():
+    stats = {"node": (torch.zeros(NODE_DIM), torch.zeros(NODE_DIM)), "glob": (torch.zeros(GLOBAL_DIM), torch.ones(GLOBAL_DIM))}
+    out = apply_scaler({"node": torch.ones(45, NODE_DIM), "glob": torch.ones(GLOBAL_DIM)}, stats)
+    assert torch.isfinite(out["node"]).all()

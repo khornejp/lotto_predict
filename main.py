@@ -21,7 +21,7 @@ import torch
 from torch import nn
 from torch.utils.data import Subset
 
-from data.dataset import LottoDataset, split_indices
+from data.dataset import LottoDataset, Scaler, apply_scaler, fit_scaler, split_indices
 from data.loader import draws_to_multihot, load_draws
 from data.updater import append_draws, update_draws
 from evaluation.backtest import backtest
@@ -35,7 +35,9 @@ from training.tune import tune
 MODELS: dict[str, type[nn.Module]] = {"ar": ARSetTransformer, "sedd": SetDiffusion, "hgnn": TemporalHGNN}
 
 
-def predict_next(model: nn.Module, df: pd.DataFrame, window: int, tickets: int, seed: int, device: str) -> list[list[int]]:
+def predict_next(
+    model: nn.Module, df: pd.DataFrame, window: int, tickets: int, seed: int, device: str, stats: Scaler
+) -> list[list[int]]:
     """Sample tickets for the next, not yet held, draw.
 
     Args:
@@ -45,12 +47,14 @@ def predict_next(model: nn.Module, df: pd.DataFrame, window: int, tickets: int, 
         tickets: Number of tickets.
         seed: Sampling seed.
         device: Device of ``model``.
+        stats: Train-split feature scaler (the same one the model was trained with).
 
     Returns:
         ``tickets`` sorted lists of 6 balls, 1-indexed.
     """
     s = build_sample(df, draws_to_multihot(df), len(df), window)
-    batch = {k: torch.from_numpy(s[k]).unsqueeze(0).to(device) for k in ("seq", "node", "glob")}  # B = 1
+    batch = apply_scaler({k: torch.from_numpy(s[k]).unsqueeze(0) for k in ("seq", "node", "glob")}, stats)  # B = 1
+    batch = {k: v.to(device) for k, v in batch.items()}
     gen = torch.Generator(device=device).manual_seed(seed)
     out = model.sample(batch, tickets, gen)[0] + 1  # Shape: [S, 6]
     return out.tolist()
@@ -95,6 +99,8 @@ def main(argv: list[str] | None = None) -> dict:
     cfg = TrainConfig(epochs=args.epochs, seed=args.seed)
     ds = LottoDataset(df, args.window)
     tr, va, te = split_indices(len(ds))
+    stats = fit_scaler(ds, tr)  # fit on train only: val/test/next-draw statistics must not leak in
+    ds.normalize(stats)
     Path(args.out).mkdir(parents=True, exist_ok=True)
     results = {}
     for name in MODELS if args.model == "all" else [args.model]:
@@ -117,7 +123,7 @@ def main(argv: list[str] | None = None) -> dict:
             "trials": trials,
             "history": hist,
             "backtest": backtest(model, Subset(ds, te), args.tickets, args.seed, cfg.device),
-            "next_draw": predict_next(model, df, args.window, args.tickets, sample_seed, cfg.device),
+            "next_draw": predict_next(model, df, args.window, args.tickets, sample_seed, cfg.device, stats),
         }
     out = {"last_draw": int(df["draw"].iloc[-1]), "added": added, "update_warning": update_warning,
            "sample_seed": sample_seed, "models": results}

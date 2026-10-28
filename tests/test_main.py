@@ -34,3 +34,23 @@ def test_main_tune_saves_and_reuses_params(tmp_path, draws_df):
     assert (ck / "ar_params.json").exists() and len(tuned["models"]["ar"]["trials"]) == 16
     again = main(args)
     assert again["models"]["ar"]["params"] == tuned["models"]["ar"]["params"]
+
+
+def test_predict_next_applies_train_scaler(draws_df):
+    import torch
+    from data.dataset import LottoDataset, fit_scaler, split_indices
+    from main import predict_next
+
+    class Spy(torch.nn.Module):
+        def sample(self, batch, num_samples, generator=None):
+            self.node = batch["node"]
+            return torch.arange(6).expand(1, num_samples, 6)
+
+    ds = LottoDataset(draws_df, 20); stats = fit_scaler(ds, split_indices(len(ds))[0])
+    spy = Spy(); predict_next(spy, draws_df, 20, 1, 0, "cpu", stats)
+    from data.dataset import apply_scaler
+    from data.loader import draws_to_multihot
+    from features.build import build_sample
+    raw = build_sample(draws_df, draws_to_multihot(draws_df), len(draws_df), 20)
+    expect = apply_scaler({k: torch.from_numpy(raw[k]).unsqueeze(0) for k in ("node", "glob")}, stats)["node"]
+    assert torch.allclose(spy.node, expect)

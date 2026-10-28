@@ -1,0 +1,115 @@
+"""Pipeline entry point: update draws -> train -> backtest -> sample next-draw tickets.
+
+Lottery draws are (near) i.i.d.; outputs are samples from a learned distribution and are
+always reported next to the uniform-random baseline. This is not a deterministic predictor.
+
+Usage:
+    python main.py --model all --epochs 50
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import secrets
+import warnings
+from pathlib import Path
+
+import pandas as pd
+import torch
+from torch import nn
+from torch.utils.data import Subset
+
+from data.dataset import LottoDataset, split_indices
+from data.loader import draws_to_multihot, load_draws
+from data.updater import append_draws, update_draws
+from evaluation.backtest import backtest
+from features.build import GLOBAL_DIM, NODE_DIM, build_sample
+from models.diffusion import SetDiffusion
+from models.hypergraph import TemporalHGNN
+from models.set_transformer import ARSetTransformer
+from training.train import TrainConfig, set_seed, train_model
+
+MODELS: dict[str, type[nn.Module]] = {"ar": ARSetTransformer, "sedd": SetDiffusion, "hgnn": TemporalHGNN}
+
+
+def predict_next(model: nn.Module, df: pd.DataFrame, window: int, tickets: int, seed: int, device: str) -> list[list[int]]:
+    """Sample tickets for the next, not yet held, draw.
+
+    Args:
+        model: Trained model.
+        df: All draws on file.
+        window: Past draws per sample.
+        tickets: Number of tickets.
+        seed: Sampling seed.
+        device: Device of ``model``.
+
+    Returns:
+        ``tickets`` sorted lists of 6 balls, 1-indexed.
+    """
+    s = build_sample(df, draws_to_multihot(df), len(df), window)
+    batch = {k: torch.from_numpy(s[k]).unsqueeze(0).to(device) for k in ("seq", "node", "glob")}  # B = 1
+    gen = torch.Generator(device=device).manual_seed(seed)
+    out = model.sample(batch, tickets, gen)[0] + 1  # Shape: [S, 6]
+    return out.tolist()
+
+
+def main(argv: list[str] | None = None) -> dict:
+    """Run the full pipeline once.
+
+    Args:
+        argv: CLI arguments (``sys.argv[1:]`` when None).
+
+    Returns:
+        ``{"last_draw", "added", "update_warning", "sample_seed", "models": {name: {"history", "backtest", "next_draw"}}}``.
+    """
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--data", default="lotto.xlsx")
+    ap.add_argument("--model", choices=[*MODELS, "all"], default="all")
+    ap.add_argument("--window", type=int, default=52)
+    ap.add_argument("--epochs", type=int, default=50)
+    ap.add_argument("--tickets", type=int, default=5)
+    ap.add_argument("--seed", type=int, default=42, help="training seed (reproducible experiments)")
+    ap.add_argument("--sample-seed", type=int, default=None, help="ticket seed; random each run when omitted")
+    ap.add_argument("--out", default="checkpoints")
+    ap.add_argument("--add", nargs=8, type=int, metavar=("DRAW", "N1", "N2", "N3", "N4", "N5", "N6", "BONUS"))
+    ap.add_argument("--no-update", action="store_true", help="skip fetching new draws")
+    args = ap.parse_args(argv)
+
+    if args.add:
+        d, *nums, bonus = args.add
+        append_draws(args.data, [{"draw": d, **{f"n{i+1}": v for i, v in enumerate(nums)}, "bonus": bonus}])
+    added, update_warning = 0, None
+    if not args.no_update:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            added = update_draws(args.data)
+        update_warning = str(caught[0].message) if caught else None
+    df = load_draws(args.data)
+    print(f"added {added} draws (last draw {df['draw'].iloc[-1]})" + (f"; {update_warning}" if update_warning else ""))
+
+    sample_seed = args.sample_seed if args.sample_seed is not None else secrets.randbits(32)
+    cfg = TrainConfig(epochs=args.epochs, seed=args.seed)
+    ds = LottoDataset(df, args.window)
+    tr, va, te = split_indices(len(ds))
+    Path(args.out).mkdir(parents=True, exist_ok=True)
+    results = {}
+    for name in MODELS if args.model == "all" else [args.model]:
+        set_seed(args.seed)
+        model = MODELS[name](window=args.window, node_dim=NODE_DIM, global_dim=GLOBAL_DIM)
+        hist = train_model(model, Subset(ds, tr), Subset(ds, va), cfg)
+        torch.save(model.state_dict(), Path(args.out) / f"{name}.pt")
+        results[name] = {
+            "history": hist,
+            "backtest": backtest(model, Subset(ds, te), args.tickets, args.seed, cfg.device),
+            "next_draw": predict_next(model, df, args.window, args.tickets, sample_seed, cfg.device),
+        }
+    out = {"last_draw": int(df["draw"].iloc[-1]), "added": added, "update_warning": update_warning,
+           "sample_seed": sample_seed, "models": results}
+    print(json.dumps({k: v for k, v in out.items() if k != "models"} | {
+        "models": {n: {"backtest": r["backtest"], "next_draw": r["next_draw"]} for n, r in results.items()}
+    }, indent=2))
+    return out
+
+
+if __name__ == "__main__":
+    main()

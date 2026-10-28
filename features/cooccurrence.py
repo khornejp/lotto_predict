@@ -1,7 +1,6 @@
 """Graph features from the ball co-occurrence network over a draw window."""
 from __future__ import annotations
 
-import networkx as nx
 import numpy as np
 
 
@@ -34,7 +33,27 @@ def centrality(co: np.ndarray) -> np.ndarray:
     if co.sum() == 0:
         out[:, 0] = 1.0
         return out
-    pr = nx.pagerank(nx.from_numpy_array(co), weight="weight")
-    out[:, 0] = np.array([pr[i] for i in range(45)]) * 45
+    out[:, 0] = _pagerank(co) * 45
     out[:, 1] = (co > 0).sum(1) / 44
     return out
+
+
+def _pagerank(co: np.ndarray, alpha: float = 0.85, tol: float = 1e-10, max_iter: int = 200) -> np.ndarray:
+    """Weighted PageRank by power iteration (networkx semantics, ~100x faster for 45 nodes).
+
+    Args:
+        co: Non-negative weight matrix. Shape: [45, 45]
+
+    Returns:
+        PageRank vector summing to 1. Shape: [45]
+    """
+    n = len(co)
+    rowsum = co.sum(1, keepdims=True)  # Shape: [45, 1]
+    p = np.where(rowsum > 0, co / np.where(rowsum > 0, rowsum, 1), 1.0 / n)  # dangling -> uniform; Shape: [45, 45]
+    r = np.full(n, 1.0 / n)  # Shape: [45]
+    for _ in range(max_iter):
+        nxt = (1 - alpha) / n + alpha * (r @ p)  # Shape: [45]
+        if np.abs(nxt - r).sum() < n * tol:
+            return nxt
+        r = nxt
+    return r

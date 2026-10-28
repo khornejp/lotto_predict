@@ -54,3 +54,10 @@ def test_predict_next_applies_train_scaler(draws_df):
     raw = build_sample(draws_df, draws_to_multihot(draws_df), len(draws_df), 20)
     expect = apply_scaler({k: torch.from_numpy(raw[k]).unsqueeze(0) for k in ("node", "glob")}, stats)["node"]
     assert torch.allclose(spy.node, expect)
+
+
+def test_main_writes_train_log(tmp_path, draws_df):
+    p = tmp_path / "l.xlsx"; save_draws(draws_df, p); ck = tmp_path / "ck"
+    main(["--data", str(p), "--epochs", "1", "--window", "20", "--no-update", "--out", str(ck)])
+    text = (ck / "train.log").read_text(encoding="utf-8")
+    assert "epoch 1/1" in text and "dataset" in text and "backtest" in text

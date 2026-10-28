@@ -1,6 +1,8 @@
 """Small regularisation-biased grid search, selected on validation loss only."""
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from itertools import product
@@ -9,6 +11,8 @@ from torch import nn
 from torch.utils.data import Dataset
 
 from training.train import TrainConfig, set_seed, train_model
+
+log = logging.getLogger("lotto.tune")
 
 # Biased toward small, strongly regularised models: the data are near-i.i.d., so capacity mostly fits noise.
 GRID: dict[str, list] = {"d_model": [32, 64], "layers": [1, 2], "dropout": [0.2, 0.4], "weight_decay": [1e-2, 1e-1]}
@@ -46,12 +50,18 @@ def tune(
         (chosen parameters, all trials with ``val_loss`` and ``n_params``).
     """
     trials = []
-    for values in product(*grid.values()):
+    combos = list(product(*grid.values()))
+    for i, values in enumerate(combos, 1):
+        t0 = time.perf_counter()
         params = dict(zip(grid, values))
         set_seed(cfg.seed)
         model = make_model(**{k: v for k, v in params.items() if k != "weight_decay"})
         hist = train_model(model, train_ds, val_ds, replace(cfg, weight_decay=params["weight_decay"]))
         trials.append({**params, "val_loss": min(hist["val_loss"]),
                        "n_params": sum(p.numel() for p in model.parameters())})
+        log.info("trial %d/%d %s val %.4f n_params %d %.1fs", i, len(combos), params,
+                 trials[-1]["val_loss"], trials[-1]["n_params"], time.perf_counter() - t0)
     chosen = select_config(trials)
+    log.info("chosen %s (val %.4f, smallest within %.3f of best %.4f)", {k: chosen[k] for k in grid},
+             chosen["val_loss"], TOLERANCE, min(t["val_loss"] for t in trials))
     return {k: chosen[k] for k in grid}, trials

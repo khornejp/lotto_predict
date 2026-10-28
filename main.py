@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import secrets
+import sys
+import time
 import warnings
 from dataclasses import replace
 from functools import partial
@@ -31,6 +34,8 @@ from models.hypergraph import TemporalHGNN
 from models.set_transformer import ARSetTransformer
 from training.train import TrainConfig, set_seed, train_model
 from training.tune import tune
+
+log = logging.getLogger("lotto.main")
 
 MODELS: dict[str, type[nn.Module]] = {"ar": ARSetTransformer, "sedd": SetDiffusion, "hgnn": TemporalHGNN}
 
@@ -82,7 +87,30 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--no-update", action="store_true", help="skip fetching new draws")
     ap.add_argument("--tune", action="store_true", help="grid-search AR hyperparameters on val loss; saves {out}/ar_params.json")
     args = ap.parse_args(argv)
+    Path(args.out).mkdir(parents=True, exist_ok=True)
+    handlers = _attach_log(Path(args.out) / "train.log")
+    try:
+        return _run(args)
+    finally:
+        for h in handlers:
+            logging.getLogger("lotto").removeHandler(h)
+            h.close()
 
+
+def _attach_log(path: Path) -> list[logging.Handler]:
+    """Send ``lotto.*`` INFO logs to stderr and append them to ``path``."""
+    logger = logging.getLogger("lotto")
+    logger.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s %(name)s %(message)s", "%Y-%m-%d %H:%M:%S")
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr), logging.FileHandler(path, encoding="utf-8")]
+    for h in handlers:
+        h.setFormatter(fmt)
+        logger.addHandler(h)
+    return handlers
+
+
+def _run(args: argparse.Namespace) -> dict:
+    """Pipeline body of ``main`` (logging already attached)."""
     if args.add:
         d, *nums, bonus = args.add
         append_draws(args.data, [{"draw": d, **{f"n{i+1}": v for i, v in enumerate(nums)}, "bonus": bonus}])
@@ -97,11 +125,15 @@ def main(argv: list[str] | None = None) -> dict:
 
     sample_seed = args.sample_seed if args.sample_seed is not None else secrets.randbits(32)
     cfg = TrainConfig(epochs=args.epochs, seed=args.seed)
+    log.info("run: last draw %d, device %s, torch threads %d, model %s, tune %s",
+             df["draw"].iloc[-1], cfg.device, torch.get_num_threads(), args.model, args.tune)
+    t0 = time.perf_counter()
     ds = LottoDataset(df, args.window)
     tr, va, te = split_indices(len(ds))
     stats = fit_scaler(ds, tr)  # fit on train only: val/test/next-draw statistics must not leak in
     ds.normalize(stats)
-    Path(args.out).mkdir(parents=True, exist_ok=True)
+    log.info("dataset: %d samples (train %d / val %d / test %d) built in %.1fs",
+             len(ds), len(tr), len(va), len(te), time.perf_counter() - t0)
     results = {}
     for name in MODELS if args.model == "all" else [args.model]:
         make = partial(MODELS[name], window=args.window, node_dim=NODE_DIM, global_dim=GLOBAL_DIM)
@@ -118,11 +150,15 @@ def main(argv: list[str] | None = None) -> dict:
         model_cfg = replace(cfg, weight_decay=params.get("weight_decay", cfg.weight_decay))
         hist = train_model(model, Subset(ds, tr), Subset(ds, va), model_cfg)
         torch.save(model.state_dict(), Path(args.out) / f"{name}.pt")
+        t0 = time.perf_counter()
+        bt = backtest(model, Subset(ds, te), args.tickets, args.seed, cfg.device)
+        log.info("backtest %s: mean matches %.3f vs %.3f, p %.3f (%.1fs)", name, bt["mean_matches"],
+                 bt["baseline_mean_matches"], bt["p_value"], time.perf_counter() - t0)
         results[name] = {
             "params": params,
             "trials": trials,
             "history": hist,
-            "backtest": backtest(model, Subset(ds, te), args.tickets, args.seed, cfg.device),
+            "backtest": bt,
             "next_draw": predict_next(model, df, args.window, args.tickets, sample_seed, cfg.device, stats),
         }
     out = {"last_draw": int(df["draw"].iloc[-1]), "added": added, "update_warning": update_warning,

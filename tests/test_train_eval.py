@@ -50,3 +50,13 @@ def test_backtest_pvalue_not_inflated_by_ticket_copies(draws_df):
     ds = LottoDataset(draws_df, 52)
     one, many = backtest(Repeat(), ds, tickets=1, seed=3), backtest(Repeat(), ds, tickets=50, seed=3)
     assert many["p_value"] == pytest.approx(one["p_value"])
+
+
+def test_train_model_logs_each_epoch(draws_df, caplog):
+    import logging
+    ds = LottoDataset(draws_df, 52); tr, va, _ = split_indices(len(ds))
+    m = TemporalHGNN(window=52, node_dim=NODE_DIM, global_dim=GLOBAL_DIM)
+    with caplog.at_level(logging.INFO, logger="lotto"):
+        train_model(m, Subset(ds, tr), Subset(ds, va), TrainConfig(epochs=2, device="cpu"))
+    lines = [r.getMessage() for r in caplog.records if r.name.startswith("lotto")]
+    assert any("epoch 1/2" in l and "val" in l for l in lines) and any("epoch 2/2" in l for l in lines)

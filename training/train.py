@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import copy
+import logging
 import random
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
+
+log = logging.getLogger("lotto.train")
 
 
 def set_seed(seed: int) -> None:
@@ -60,7 +64,8 @@ def train_model(model: nn.Module, train_ds: Dataset, val_ds: Dataset, cfg: Train
     val_loader = DataLoader(val_ds, batch_size=cfg.batch_size)
     hist: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
     best, best_state, stale = float("inf"), copy.deepcopy(model.state_dict()), 0
-    for _ in range(cfg.epochs):
+    for epoch in range(1, cfg.epochs + 1):
+        t0 = time.perf_counter()
         model.train()
         losses = []
         for batch in loader:
@@ -77,11 +82,15 @@ def train_model(model: nn.Module, train_ds: Dataset, val_ds: Dataset, cfg: Train
             val = float(np.mean([model.loss(_to(b, cfg.device)).item() for b in val_loader]))
         hist["train_loss"].append(float(np.mean(losses)))
         hist["val_loss"].append(val)
-        if val < best:
+        improved = val < best
+        log.info("epoch %d/%d train %.4f val %.4f%s %.1fs", epoch, cfg.epochs, hist["train_loss"][-1], val,
+                 " (best)" if improved else "", time.perf_counter() - t0)
+        if improved:
             best, best_state, stale = val, copy.deepcopy(model.state_dict()), 0
         else:
             stale += 1
             if stale >= cfg.patience:
+                log.info("early stop at epoch %d: val did not improve for %d epochs", epoch, cfg.patience)
                 break
     model.load_state_dict(best_state)
     model.eval()

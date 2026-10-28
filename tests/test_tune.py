@@ -23,3 +23,14 @@ def test_tune_runs_every_combo_and_returns_grid_params(draws_df):
     best, trials = tune(make, Subset(ds, tr), Subset(ds, va), TrainConfig(epochs=1, device="cpu"), grid)
     assert len(trials) == 4 and set(best) == set(grid)
     assert best["d_model"] in grid["d_model"] and best["weight_decay"] in grid["weight_decay"]
+
+
+def test_tune_logs_each_trial(draws_df, caplog):
+    import logging
+    ds = LottoDataset(draws_df, 20); tr, va, _ = split_indices(len(ds))
+    grid = {"d_model": [16], "layers": [1], "dropout": [0.2], "weight_decay": [1e-2, 1e-1]}
+    make = lambda **kw: ARSetTransformer(window=20, node_dim=NODE_DIM, global_dim=GLOBAL_DIM, **kw)
+    with caplog.at_level(logging.INFO, logger="lotto"):
+        tune(make, Subset(ds, tr), Subset(ds, va), TrainConfig(epochs=1, device="cpu"), grid)
+    lines = [r.getMessage() for r in caplog.records]
+    assert any("trial 1/2" in l for l in lines) and any("trial 2/2" in l for l in lines) and any("chosen" in l for l in lines)

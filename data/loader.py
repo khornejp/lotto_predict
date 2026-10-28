@@ -84,7 +84,11 @@ def save_draws(df: pd.DataFrame, path: str | Path) -> None:
     out.columns = ["count", 1, 2, 3, 4, 5, 6, 7]
     tmp = path.with_suffix(".tmp.xlsx")
     out.to_excel(tmp, index=False, engine="openpyxl")
-    os.replace(tmp, path)
+    try:
+        os.replace(tmp, path)  # fails on Windows while the file is open in Excel
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def draws_to_multihot(df: pd.DataFrame) -> np.ndarray:

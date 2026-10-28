@@ -38,3 +38,15 @@ def test_train_model_runs_and_restores_best(draws_df):
     m = TemporalHGNN(window=52, node_dim=NODE_DIM, global_dim=GLOBAL_DIM)
     h = train_model(m, Subset(ds, tr), Subset(ds, va), TrainConfig(epochs=3, device="cpu"))
     assert len(h["val_loss"]) <= 3 and all(np.isfinite(h["val_loss"])) and not m.training
+
+
+class Repeat(Uniform):
+    """One random ticket per draw, repeated: extra copies add no evidence."""
+    def sample(self, batch, num_samples, generator=None):
+        return super().sample(batch, 1, generator).expand(-1, num_samples, -1)
+
+
+def test_backtest_pvalue_not_inflated_by_ticket_copies(draws_df):
+    ds = LottoDataset(draws_df, 52)
+    one, many = backtest(Repeat(), ds, tickets=1, seed=3), backtest(Repeat(), ds, tickets=50, seed=3)
+    assert many["p_value"] == pytest.approx(one["p_value"])

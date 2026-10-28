@@ -35,11 +35,20 @@ def test_update_network_error_warns_and_keeps_file(tmp_path, draws_df):
     assert len(load_draws(p)) == 120
 
 
-def test_update_rejects_invalid_fetched_row(tmp_path, draws_df):
+def test_update_invalid_fetched_row_warns_and_keeps_good_rows(tmp_path, draws_df):
     p = tmp_path / "l.xlsx"; save_draws(draws_df, p)
-    with pytest.raises(ValueError, match="draw 121"):
-        update_draws(p, fake_fetch([row(121, [1,1,3,4,5,6], 7)]))
-    assert len(load_draws(p)) == 120
+    with pytest.warns(UserWarning, match="draw 122"):
+        added = update_draws(p, fake_fetch([row(121, [1,2,3,4,5,6], 7), row(122, [1,1,3,4,5,6], 7)]))
+    assert added == 1 and len(load_draws(p)) == 121
+
+
+def test_update_locked_file_warns_and_cleans_tmp(tmp_path, draws_df, monkeypatch):
+    p = tmp_path / "l.xlsx"; save_draws(draws_df, p)
+    def locked(*a): raise PermissionError("file in use")
+    monkeypatch.setattr("data.loader.os.replace", locked)
+    with pytest.warns(UserWarning, match="file in use"):
+        assert update_draws(p, fake_fetch([row(121, [1,2,3,4,5,6], 7)])) == 0
+    assert len(load_draws(p)) == 120 and not (tmp_path / "l.tmp.xlsx").exists()
 
 
 def test_append_wrong_draw_number(tmp_path, draws_df):

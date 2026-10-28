@@ -36,7 +36,8 @@ def backtest(model: nn.Module, ds: Dataset, tickets: int = 5, seed: int = 0, dev
         device: Device for sampling.
 
     Returns:
-        Metrics with baselines and a one-sided one-sample t-test (H1: mean matches > 0.8).
+        Metrics with baselines and a one-sided one-sample t-test over per-draw mean
+        matches (H1: mean matches > 0.8).
     """
     model.to(device).eval()
     gen = torch.Generator(device=device).manual_seed(seed)
@@ -46,8 +47,10 @@ def backtest(model: nn.Module, ds: Dataset, tickets: int = 5, seed: int = 0, dev
         s = model.sample(batch, tickets, gen)  # Shape: [B, S, 6]
         matches.append(count_matches(s, batch["target"]))
         unique += [len({tuple(t) for t in row.tolist()}) / tickets for row in s]
-    m = np.concatenate(matches).ravel()  # Shape: [N*S]
-    t = stats.ttest_1samp(m, BASELINE_MEAN_MATCHES, alternative="greater")
+    per_draw = np.concatenate(matches)  # Shape: [N, S]
+    m = per_draw.ravel()  # Shape: [N*S]
+    # Tickets of one draw share its target (and may be correlated), so test over draws, not tickets.
+    t = stats.ttest_1samp(per_draw.mean(1), BASELINE_MEAN_MATCHES, alternative="greater")
     return {
         "n_draws": len(ds),
         "tickets": tickets,

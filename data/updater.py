@@ -61,12 +61,17 @@ def append_draws(path: str | Path, rows: list[dict[str, int]]) -> None:
         ValueError: If the result would be invalid; the file is left untouched.
     """
     path = Path(path)
-    new = pd.DataFrame(rows, columns=["draw", *MAIN_COLS, "bonus"]).astype(int)
-    new[MAIN_COLS] = np.sort(new[MAIN_COLS].to_numpy(), axis=1)
-    df = pd.concat([load_draws(path).drop(columns="date"), new], ignore_index=True)
+    df = _with_rows(load_draws(path).drop(columns="date"), rows)
     validate_draws(df)
     shutil.copy2(path, path.with_suffix(".xlsx.bak"))
     save_draws(df, path)
+
+
+def _with_rows(df: pd.DataFrame, rows: list[dict[str, int]]) -> pd.DataFrame:
+    """Return ``df`` with ``rows`` appended (main balls sorted)."""
+    new = pd.DataFrame(rows, columns=["draw", *MAIN_COLS, "bonus"]).astype(int)
+    new[MAIN_COLS] = np.sort(new[MAIN_COLS].to_numpy(), axis=1)
+    return pd.concat([df, new], ignore_index=True)
 
 
 def update_draws(
@@ -74,7 +79,8 @@ def update_draws(
 ) -> int:
     """Fetch draws after the last one on file and append them.
 
-    A fetch failure only warns; draws fetched before it are still saved.
+    Never raises for source or file problems: a failed fetch, an invalid fetched row,
+    or a locked file only warns, and valid draws fetched before the problem are kept.
 
     Args:
         path: Spreadsheet path.
@@ -84,17 +90,25 @@ def update_draws(
     Returns:
         Number of draws added.
     """
-    n = int(load_draws(path)["draw"].iloc[-1]) + 1
+    base = load_draws(path).drop(columns="date")
+    n = int(base["draw"].iloc[-1]) + 1
     rows: list[dict[str, int]] = []
     for draw_no in range(n, n + max_new):
         try:
             r = fetch(draw_no)
-        except UpdateError as e:
+            if r is not None:
+                validate_draws(_with_rows(base, [*rows, r]))
+        except (UpdateError, ValueError) as e:
             warnings.warn(f"auto update failed at draw {draw_no}: {e}")
             break
         if r is None:
             break
         rows.append(r)
-    if rows:
+    if not rows:
+        return 0
+    try:
         append_draws(path, rows)
+    except OSError as e:
+        warnings.warn(f"auto update could not write {path}: {e}")
+        return 0
     return len(rows)

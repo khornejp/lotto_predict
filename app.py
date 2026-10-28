@@ -39,15 +39,19 @@ with st.expander("당첨번호 수동 입력"):
     with st.form("add"):
         draw = st.number_input("회차", 1, value=int(last["draw"]) + 1, key="add_draw")
         cols = st.columns(7)
-        nums = [cols[i].number_input(f"n{i+1}", 1, 45, i + 1, key=f"add_n{i+1}") for i in range(6)]
-        bonus = cols[6].number_input("보너스", 1, 45, 7, key="add_bonus")
+        # No defaults: a stray click must not save a plausible-looking fake draw.
+        nums = [cols[i].number_input(f"n{i+1}", 1, 45, None, key=f"add_n{i+1}") for i in range(6)]
+        bonus = cols[6].number_input("보너스", 1, 45, None, key="add_bonus")
         if st.form_submit_button("추가", key="add_submit"):
-            try:
-                append_draws(DATA, [{"draw": draw, **{f"n{i+1}": v for i, v in enumerate(nums)}, "bonus": bonus}])
-                st.success(f"{draw}회 추가됨")
-                st.rerun()
-            except ValueError as e:
-                st.error(str(e))
+            if None in (*nums, bonus):
+                st.error("번호 6개와 보너스를 모두 입력하세요.")
+            else:
+                try:
+                    append_draws(DATA, [{"draw": draw, **{f"n{i+1}": v for i, v in enumerate(nums)}, "bonus": bonus}])
+                    st.success(f"{draw}회 추가됨")
+                    st.rerun()
+                except (ValueError, OSError) as e:
+                    st.error(str(e))
 
 if st.button("실행", key="run", type="primary"):
     argv = ["--data", DATA, "--model", model, "--epochs", str(epochs), "--tickets", str(tickets),

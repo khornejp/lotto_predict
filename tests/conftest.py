@@ -4,8 +4,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from data.loader import draw_date
+from features.build import GLOBAL_DIM, NODE_DIM
 
 MAIN_COLS = ["n1", "n2", "n3", "n4", "n5", "n6"]
 
@@ -34,3 +36,15 @@ def synthetic_draws(n: int = 120, seed: int = 0) -> pd.DataFrame:
 def draws_df() -> pd.DataFrame:
     """Fresh 120-draw synthetic history (mutable per test)."""
     return synthetic_draws()
+
+
+@pytest.fixture
+def tiny_batch() -> dict[str, torch.Tensor]:
+    """Seeded random batch, B=4, W=8, in the dataset's tensor layout."""
+    g = torch.Generator().manual_seed(0)
+    return {
+        "seq": (torch.rand(4, 8, 45, generator=g) < 6 / 45).float(),  # Shape: [4, 8, 45]
+        "node": torch.randn(4, 45, NODE_DIM, generator=g),  # Shape: [4, 45, NODE_DIM]
+        "glob": torch.randn(4, GLOBAL_DIM, generator=g),  # Shape: [4, GLOBAL_DIM]
+        "target": torch.rand(4, 45, generator=g).argsort(1)[:, :6].sort(1).values,  # Shape: [4, 6]
+    }

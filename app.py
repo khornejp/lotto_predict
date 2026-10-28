@@ -20,7 +20,7 @@ st.set_page_config(page_title="Lotto ML", layout="wide")
 st.title("로또 6/45 단독 모델")
 
 with st.sidebar:
-    model = st.selectbox("모델", ["all", *MODELS], key="model")
+    model = st.selectbox("모델", [*MODELS, "all"], key="model")
     epochs = st.number_input("epochs", 1, 500, 50, key="epochs")
     tickets = st.number_input("티켓 수", 1, 50, 5, key="tickets")
     window = st.number_input("window (회차)", 10, 520, 52, key="window")

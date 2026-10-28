@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> dict:
     """
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", default="lotto.xlsx")
-    ap.add_argument("--model", choices=[*MODELS, "all"], default="all")
+    ap.add_argument("--model", choices=[*MODELS, "all"], default="ar")
     ap.add_argument("--window", type=int, default=52)
     ap.add_argument("--epochs", type=int, default=50)
     ap.add_argument("--tickets", type=int, default=5)

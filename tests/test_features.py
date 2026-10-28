@@ -6,8 +6,8 @@ import pytest
 from data.loader import draws_to_multihot
 from features.calendar_feats import calendar_features
 from features.cooccurrence import centrality, cooccurrence_matrix
-from features.structural import ac_value, balance_stats, sum_density
-from features.temporal import gap_features, range_entropy, regime_cosine
+from features.structural import ac_value, balance_stats, last_digit_entropy, sum_density
+from features.temporal import binomial_z, ewma_rate, gap_features, multi_horizon_freq, range_entropy, regime_cosine
 
 
 def test_cooccurrence_two_rows():
@@ -60,3 +60,26 @@ def test_sum_density():
 def test_calendar_unit_circle():
     f = calendar_features(date(2022, 1, 29))
     assert f.shape == (4,) and f[0]**2 + f[1]**2 == pytest.approx(1) and f[2]**2 + f[3]**2 == pytest.approx(1)
+
+
+def test_multi_horizon_freq():
+    h = np.zeros((20, 45), np.float32); h[-5:, 0] = 1; h[:10, 1] = 1
+    f = multi_horizon_freq(h, (5, 10))
+    assert f.shape == (45, 3)
+    assert f[0].tolist() == pytest.approx([1.0, 0.5, 0.25]) and f[1].tolist() == pytest.approx([0, 0, 0.5])
+
+
+def test_ewma_rate_weights_recent_more():
+    h = np.zeros((30, 45), np.float32); h[-1, 0] = 1; h[0, 1] = 1
+    r = ewma_rate(h, halflife=10)
+    assert r.shape == (45,) and r[0] > r[1] > 0 and r[2] == 0
+
+
+def test_binomial_z_sign():
+    h = np.zeros((45, 45), np.float32); h[:, 0] = 1     # ball 0 in every draw
+    z = binomial_z(h)
+    assert z[0] == 5 and z[1] < 0 and np.isfinite(z).all()   # clipped at 5
+
+
+def test_last_digit_entropy():
+    assert last_digit_entropy([1, 11, 21, 31, 41, 2]) < last_digit_entropy([1, 2, 3, 4, 5, 6]) == pytest.approx(1.0)

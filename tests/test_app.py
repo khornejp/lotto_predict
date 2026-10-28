@@ -41,3 +41,8 @@ def test_app_manual_add_locked_file_shows_error(tmp_path, draws_df, monkeypatch)
         at.number_input(key=f"add_n{i+1}").set_value(v)
     at.number_input(key="add_bonus").set_value(7); at.button(key="add_submit").click().run(timeout=30)
     assert not at.exception and at.error and len(load_draws(p)) == 120
+
+
+def test_app_default_model_is_ar(tmp_path, draws_df, monkeypatch):
+    p = tmp_path / "l.xlsx"; save_draws(draws_df, p); monkeypatch.setenv("LOTTO_DATA", str(p))
+    assert AppTest.from_file("../app.py").run(timeout=30).selectbox(key="model").value == "ar"

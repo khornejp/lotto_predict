@@ -3,7 +3,7 @@ import torch
 
 from data.dataset import LottoDataset, split_indices
 from data.loader import draws_to_multihot
-from features.build import GLOBAL_DIM, NODE_DIM, build_sample
+from features.build import CARRY_COL, GLOBAL_DIM, NODE_DIM, build_sample
 
 
 def test_build_sample_shapes(draws_df):
@@ -35,3 +35,18 @@ def test_dataset_len_and_item(draws_df):
 def test_split_indices_chronological():
     tr, va, te = split_indices(100)
     assert tr == list(range(80)) and va == list(range(80, 90)) and te == list(range(90, 100))
+
+
+def test_build_sample_ignores_target_row_in_df(draws_df):
+    m = draws_to_multihot(draws_df); df2 = draws_df.copy()
+    df2.loc[60, ["n1","n2","n3","n4","n5","n6","bonus"]] = [1, 2, 3, 4, 5, 6, 7]
+    a, b = build_sample(draws_df, m, 60, 52), build_sample(df2, m, 60, 52)
+    for k in ("seq", "node", "glob"):
+        assert np.array_equal(a[k], b[k])
+
+
+def test_new_node_features_recency(draws_df):
+    m = draws_to_multihot(draws_df); s = build_sample(draws_df, m, 60, 52)
+    last = draws_df.loc[59, ["n1","n2","n3","n4","n5","n6"]].to_numpy(dtype=int) - 1
+    carry = s["node"][:, CARRY_COL]
+    assert carry[last].tolist() == [1.0] * 6 and carry.sum() == 6

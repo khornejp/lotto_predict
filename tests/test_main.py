@@ -19,3 +19,9 @@ def test_main_manual_add(tmp_path, draws_df):
     out = main(["--data", str(p), "--model", "hgnn", "--epochs", "1", "--window", "20", "--no-update",
                 "--add", "121", "1", "2", "3", "4", "5", "6", "7", "--out", str(tmp_path / "ck")])
     assert out["last_draw"] == 121 and len(load_draws(p)) == 121
+
+
+def test_main_default_model_is_ar(tmp_path, draws_df):
+    p = tmp_path / "l.xlsx"; save_draws(draws_df, p)
+    out = main(["--data", str(p), "--epochs", "1", "--window", "20", "--no-update", "--out", str(tmp_path / "ck")])
+    assert set(out["models"]) == {"ar"}

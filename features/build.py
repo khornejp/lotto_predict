@@ -7,11 +7,17 @@ import pandas as pd
 from data.loader import MAIN_COLS, draw_date
 from features.calendar_feats import calendar_features
 from features.cooccurrence import centrality, cooccurrence_matrix
-from features.structural import ac_value, balance_stats, sum_density
-from features.temporal import gap_features, range_entropy, regime_cosine
+from features.structural import SUM_STD, ac_value, balance_stats, last_digit_entropy, sum_density
+from features.temporal import binomial_z, ewma_rate, gap_features, multi_horizon_freq, range_entropy, regime_cosine
 
-NODE_DIM = 5  # [log1p(lag), gap z, window freq, pagerank*45, degree]
-GLOBAL_DIM = 16  # [ac/10, balance(8), sum density, range entropy, regime cosine, calendar(4)]
+# Node columns: [log1p(lag), gap z, window freq, pagerank*45, degree, freq@5/10/26/104/all,
+#                ewma rate, carry (in last draw), neighbour of last draw, co-occurrence with last draw,
+#                bonus rate in window, binomial z, last digit/9]
+NODE_DIM = 17
+CARRY_COL = 11
+# Global: [ac/10, balance(8), sum density, range entropy, regime cosine, calendar(4),
+#          overlap(t-1, t-2)/6, sum change/std, last-digit entropy]
+GLOBAL_DIM = 19
 RECENT = 10  # short horizon for entropy / regime features
 
 
@@ -39,16 +45,27 @@ def build_sample(
     seq = history[-window:]  # Shape: [window, 45]
 
     lag, z = gap_features(history)  # Shape: [45], [45]
-    cent = centrality(cooccurrence_matrix(seq))  # Shape: [45, 2]
-    node = np.column_stack([np.log1p(lag), z, seq.mean(0), cent]).astype(np.float32)  # Shape: [45, 5]
+    co = cooccurrence_matrix(seq)  # Shape: [45, 45]
+    cent = centrality(co)  # Shape: [45, 2]
+    last = history[-1]  # Shape: [45]
+    neighbour = np.clip(np.roll(last, 1) + np.roll(last, -1), 0, 1)  # ball i-1 or i+1 drawn last time
+    neighbour[0], neighbour[-1] = last[1], last[-2]  # no wrap-around between 1 and 45
+    bonus = np.bincount(df["bonus"].iloc[t - window:t].to_numpy() - 1, minlength=45) / window  # Shape: [45]
+    node = np.column_stack([
+        np.log1p(lag), z, seq.mean(0), cent,
+        multi_horizon_freq(history), ewma_rate(history), last, neighbour, co @ last,
+        bonus, binomial_z(history), (np.arange(1, 46) % 10) / 9,
+    ]).astype(np.float32)  # Shape: [45, 17]
 
     prev = df.loc[t - 1, MAIN_COLS].to_numpy(dtype=int)  # Shape: [6], 1-indexed
+    prev2 = df.loc[t - 2, MAIN_COLS].to_numpy(dtype=int)  # Shape: [6]
     glob = np.concatenate([
         [ac_value(prev) / 10],
         balance_stats(prev),
         [sum_density(int(prev.sum())), range_entropy(history[-RECENT:]), regime_cosine(history, RECENT, window)],
         calendar_features(draw_date(t + 1)),
-    ]).astype(np.float32)  # Shape: [16]
+        [len(set(prev) & set(prev2)) / 6, (prev.sum() - prev2.sum()) / SUM_STD, last_digit_entropy(prev)],
+    ]).astype(np.float32)  # Shape: [19]
 
     target = None
     if t < len(multihot):

@@ -52,3 +52,17 @@ def sum_density(total: int) -> float:
     """
     z = (total - SUM_MEAN) / SUM_STD
     return float(math.exp(-z * z / 2))
+
+
+def last_digit_entropy(nums: Sequence[int]) -> float:
+    """Normalized entropy of the 6 balls' last digits (1.0 = all different).
+
+    Args:
+        nums: 6 balls, 1-indexed.
+
+    Returns:
+        Entropy / log(6), in [0, 1].
+    """
+    counts = np.bincount([n % 10 for n in nums], minlength=10)
+    p = counts[counts > 0] / len(nums)
+    return float(-(p * np.log(p)).sum() / math.log(6))

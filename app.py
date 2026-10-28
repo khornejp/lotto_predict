@@ -12,7 +12,7 @@ import streamlit as st
 
 from data.loader import MAIN_COLS, draw_date, load_draws
 from data.updater import append_draws
-from main import MODELS, main
+from main import main
 
 DATA = os.environ.get("LOTTO_DATA", "lotto.xlsx")
 
@@ -20,7 +20,6 @@ st.set_page_config(page_title="Lotto ML", layout="wide")
 st.title("로또 6/45 단독 모델")
 
 with st.sidebar:
-    model = st.selectbox("모델", [*MODELS, "all"], key="model")
     epochs = st.number_input("epochs", 1, 500, 50, key="epochs")
     tickets = st.number_input("티켓 수", 1, 50, 5, key="tickets")
     window = st.number_input("window (회차)", 10, 520, 52, key="window")
@@ -54,7 +53,8 @@ with st.expander("당첨번호 수동 입력"):
                     st.error(str(e))
 
 if st.button("실행", key="run", type="primary"):
-    argv = ["--data", DATA, "--model", model, "--epochs", str(epochs), "--tickets", str(tickets),
+    # UI is AR-only; SEDD/HGNN stay CLI-only (--model) for comparison.
+    argv = ["--data", DATA, "--model", "ar", "--epochs", str(epochs), "--tickets", str(tickets),
             "--window", str(window)] + ([] if auto_update else ["--no-update"])
     with st.spinner("갱신 + 학습 + 백테스트 중..."):
         st.session_state["result"] = main(argv)

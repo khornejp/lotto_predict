@@ -18,3 +18,15 @@ def test_streamlit_args_local_only_and_non_interactive():
     assert "--server.headless=true" in args          # no first-run e-mail prompt blocking the server
     assert "--server.address=localhost" in args      # not reachable from other machines
     assert "--server.port=8501" in args
+
+
+def test_work_dir_is_install_folder_when_frozen(tmp_path, monkeypatch):
+    import launcher
+    monkeypatch.setattr(launcher.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(launcher.sys, "executable", str(tmp_path / "LottoML.exe"))
+    assert launcher.work_dir(tmp_path / "home") == tmp_path   # checkpoints + train.log beside LottoML.exe
+
+
+def test_work_dir_falls_back_to_home_from_source(tmp_path):
+    from launcher import work_dir
+    assert work_dir(tmp_path / "home") == tmp_path / "home"

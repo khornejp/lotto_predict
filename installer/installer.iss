@@ -1,4 +1,4 @@
-; Inno Setup script: per-user install (no admin) of the PyInstaller onedir build.
+﻿; Inno Setup script: per-user install (no admin) of the PyInstaller onedir build.
 ; Compile with installer/build.ps1, which runs PyInstaller first.
 
 #define AppName "LottoML"
@@ -36,4 +36,4 @@ Name: "{userdesktop}\{#AppName}"; Filename: "{app}\LottoML.exe"; Tasks: desktopi
 [Run]
 Filename: "{app}\LottoML.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 
-; User data (%LOCALAPPDATA%\LottoML: lotto.xlsx, checkpoints) is kept on uninstall on purpose.
+; User data is kept on uninstall on purpose: %LOCALAPPDATA%\LottoML\lotto.xlsx and {app}\checkpoints (not installed by setup, so not removed).

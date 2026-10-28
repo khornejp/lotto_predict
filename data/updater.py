@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 import urllib.request
 import warnings
 from collections.abc import Callable
@@ -17,8 +18,18 @@ from data.loader import MAIN_COLS, load_draws, save_draws, validate_draws
 DEFAULT_API = "https://www.dhlottery.co.kr/lt645/selectPstLt645Info.do?srchLtEpsd={n}"
 
 
+_WRITE_LOCK = threading.Lock()  # serialises read-validate-backup-write of the spreadsheet
+
+
 class UpdateError(RuntimeError):
     """The draw source could not be reached or returned something unexpected."""
+
+
+def _as_int(v: object) -> int:
+    """Strict int conversion: reject bools, fractions and non-numbers instead of truncating."""
+    if isinstance(v, bool) or not float(v).is_integer():
+        raise ValueError(f"non-integer ball {v!r}")
+    return int(v)
 
 
 def fetch_draw(draw_no: int, url: str = DEFAULT_API, timeout: float = 10.0) -> dict[str, int] | None:
@@ -43,7 +54,7 @@ def fetch_draw(draw_no: int, url: str = DEFAULT_API, timeout: float = 10.0) -> d
         it = items[0]
         if it["ltEpsd"] != draw_no:
             raise UpdateError(f"asked for draw {draw_no}, got {it['ltEpsd']}")
-        return {"draw": draw_no, **{f"n{i}": int(it[f"tm{i}WnNo"]) for i in range(1, 7)}, "bonus": int(it["bnsWnNo"])}
+        return {"draw": draw_no, **{f"n{i}": _as_int(it[f"tm{i}WnNo"]) for i in range(1, 7)}, "bonus": _as_int(it["bnsWnNo"])}
     except UpdateError:
         raise
     except (OSError, ValueError, KeyError, TypeError, IndexError) as e:
@@ -61,10 +72,12 @@ def append_draws(path: str | Path, rows: list[dict[str, int]]) -> None:
         ValueError: If the result would be invalid; the file is left untouched.
     """
     path = Path(path)
-    df = _with_rows(load_draws(path).drop(columns="date"), rows)
-    validate_draws(df)
-    shutil.copy2(path, path.with_suffix(".xlsx.bak"))
-    save_draws(df, path)
+    # shortcut: in-process lock only (Streamlit sessions share one process); add a file lock if several processes write.
+    with _WRITE_LOCK:
+        df = _with_rows(load_draws(path).drop(columns="date"), rows)
+        validate_draws(df)
+        shutil.copy2(path, path.with_suffix(".xlsx.bak"))
+        save_draws(df, path)
 
 
 def _with_rows(df: pd.DataFrame, rows: list[dict[str, int]]) -> pd.DataFrame:

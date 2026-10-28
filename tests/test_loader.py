@@ -45,3 +45,17 @@ def test_multihot_six_per_row(draws_df):
 def test_draw_date():
     assert draw_date(1) == date(2002, 12, 7)
     assert draw_date(1000) == date(2022, 1, 29)
+
+
+def test_load_draws_rejects_fractional_ball(tmp_path, draws_df):
+    draws_df["n1"] = draws_df["n1"].astype(float); draws_df.loc[4, "n1"] = 1.5
+    p = tmp_path / "f.xlsx"; save_draws(draws_df, p)
+    with pytest.raises(ValueError, match="draw 5"):
+        load_draws(p)
+
+
+def test_load_draws_rejects_blank_cell(tmp_path, draws_df):
+    draws_df["n3"] = draws_df["n3"].astype(float); draws_df.loc[7, "n3"] = np.nan
+    p = tmp_path / "n.xlsx"; save_draws(draws_df, p)
+    with pytest.raises(ValueError, match="draw 8"):
+        load_draws(p)

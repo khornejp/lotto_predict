@@ -29,3 +29,10 @@ def test_hgnn_overfits_tiny(tiny_batch):
 def test_hgnn_isolated_ball_finite(tiny_batch):
     tiny_batch["seq"][:, :, 0] = 0          # ball 0 in no hyperedge → Dv = 0 path
     assert torch.isfinite(TemporalHGNN(window=8, node_dim=NODE_DIM, global_dim=GLOBAL_DIM).loss(tiny_batch))
+
+
+def test_hgnn_uses_global_features(tiny_batch):
+    torch.manual_seed(0); m = make().eval()
+    other = {**tiny_batch, "glob": tiny_batch["glob"] + 3.0}
+    pa, pb = m.ball_logits(tiny_batch).softmax(-1), m.ball_logits(other).softmax(-1)
+    assert not torch.allclose(pa, pb, atol=1e-4)

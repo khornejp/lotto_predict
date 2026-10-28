@@ -81,10 +81,11 @@ class TemporalHGNN(nn.Module):
         """
         h = batch["seq"].transpose(1, 2)  # Shape: [B, 45, W]
         w = torch.sigmoid(self.gamma_logit) ** self.age  # Shape: [W]
-        x = self.node_proj(batch["node"]) + self.ball_emb  # Shape: [B, 45, d]
+        # Global context enters before the nonlinear layers; added after them it would shift
+        # every ball's logit equally and cancel in the softmax.
+        x = self.node_proj(batch["node"]) + self.ball_emb + self.glob_proj(batch["glob"]).unsqueeze(1)  # Shape: [B, 45, d]
         for conv in self.convs:
             x = conv(x, h, w)
-        x = x + self.glob_proj(batch["glob"]).unsqueeze(1)  # Shape: [B, 45, d]
         return self.readout(x).squeeze(-1)  # Shape: [B, 45]
 
     def loss(self, batch: dict[str, Tensor]) -> Tensor:

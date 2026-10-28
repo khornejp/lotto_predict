@@ -6,6 +6,7 @@ draw in descending draw order; columns 1..6 are the main balls, 7 the bonus.
 from __future__ import annotations
 
 import os
+import tempfile
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -65,6 +66,12 @@ def load_draws(path: str | Path) -> pd.DataFrame:
     """
     raw = pd.read_excel(path, header=0, engine="openpyxl")
     raw.columns = ["draw", *MAIN_COLS, "bonus"]
+    vals = raw.to_numpy(dtype=float)  # Shape: [T, 8]
+    bad = np.flatnonzero(~np.isfinite(vals).all(1) | (vals != np.round(vals)).any(1))
+    if bad.size:  # reject before the int cast, which would silently truncate 1.9 -> 1
+        d = vals[bad[0], 0]
+        where = f"draw {int(d)}" if np.isfinite(d) and d == round(d) else f"row {bad[0] + 2}"
+        raise ValueError(f"{where}: blank or non-integer value")
     df = raw.astype(int).sort_values("draw").reset_index(drop=True)
     df[MAIN_COLS] = np.sort(df[MAIN_COLS].to_numpy(), axis=1)
     validate_draws(df)
@@ -82,11 +89,13 @@ def save_draws(df: pd.DataFrame, path: str | Path) -> None:
     path = Path(path)
     out = df[["draw", *MAIN_COLS, "bonus"]].sort_values("draw", ascending=False)
     out.columns = ["count", 1, 2, 3, 4, 5, 6, 7]
-    tmp = path.with_suffix(".tmp.xlsx")
-    out.to_excel(tmp, index=False, engine="openpyxl")
+    fd, name = tempfile.mkstemp(suffix=".tmp.xlsx", dir=path.parent)  # unique: concurrent writers never share it
+    os.close(fd)
+    tmp = Path(name)
     try:
+        out.to_excel(tmp, index=False, engine="openpyxl")
         os.replace(tmp, path)  # fails on Windows while the file is open in Excel
-    except OSError:
+    except BaseException:
         tmp.unlink(missing_ok=True)
         raise
 

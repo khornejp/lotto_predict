@@ -48,7 +48,7 @@ def test_update_locked_file_warns_and_cleans_tmp(tmp_path, draws_df, monkeypatch
     monkeypatch.setattr("data.loader.os.replace", locked)
     with pytest.warns(UserWarning, match="file in use"):
         assert update_draws(p, fake_fetch([row(121, [1,2,3,4,5,6], 7)])) == 0
-    assert len(load_draws(p)) == 120 and not (tmp_path / "l.tmp.xlsx").exists()
+    assert len(load_draws(p)) == 120 and not list(tmp_path.glob("*.tmp.xlsx"))
 
 
 def test_append_wrong_draw_number(tmp_path, draws_df):
@@ -73,3 +73,32 @@ def test_fetch_draw_bad_body_raises(monkeypatch, body):
     monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: io.BytesIO(body))
     with pytest.raises(UpdateError):
         fetch_draw(1248)
+
+
+def test_fetch_draw_fractional_raises(monkeypatch):
+    body = (b'{"data":{"list":[{"ltEpsd":1248,"tm1WnNo":1.5,"tm2WnNo":2,"tm3WnNo":3,'
+            b'"tm4WnNo":4,"tm5WnNo":5,"tm6WnNo":6,"bnsWnNo":7}]}}')
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: io.BytesIO(body))
+    with pytest.raises(UpdateError):
+        fetch_draw(1248)
+
+
+def test_concurrent_appends_do_not_lose_draws(tmp_path, draws_df, monkeypatch):
+    import threading
+    import data.updater as up
+    p = tmp_path / "l.xlsx"; save_draws(draws_df, p)
+    real_save, entered, release = up.save_draws, threading.Event(), threading.Event()
+    def slow_save(df, path):
+        entered.set(); release.wait(10); real_save(df, path)
+    monkeypatch.setattr(up, "save_draws", slow_save)
+    a = threading.Thread(target=append_draws, args=(p, [row(121, [1,2,3,4,5,6], 7)])); a.start()
+    assert entered.wait(10)
+    errors = []
+    def second():
+        try: append_draws(p, [row(121, [8,9,10,11,12,13], 14)])
+        except ValueError as e: errors.append(e)
+    b = threading.Thread(target=second); b.start(); b.join(1.0)
+    release.set(); a.join(10); b.join(10)
+    df = load_draws(p)
+    assert len(df) == 121 and list(df.iloc[-1][["n1","n2","n3","n4","n5","n6"]]) == [1,2,3,4,5,6]
+    assert len(errors) == 1
